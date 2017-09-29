@@ -23,6 +23,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/gce"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/kubemark"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/kubevirt"
 	"k8s.io/client-go/informers"
 	kubeclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -30,6 +31,7 @@ import (
 	kubemarkcontroller "k8s.io/kubernetes/pkg/kubemark"
 
 	"github.com/golang/glog"
+	"strings"
 )
 
 // CloudProviderBuilder builds a cloud provider from all the necessary parameters including the name of a cloud provider e.g. aws, gce
@@ -143,6 +145,34 @@ func (b CloudProviderBuilder) Build(discoveryOpts cloudprovider.NodeGroupDiscove
 		cloudProvider, err = kubemark.BuildKubemarkCloudProvider(kubemarkController, nodeGroupsFlag)
 		if err != nil {
 			glog.Fatalf("Failed to create Kubemark cloud provider: %v", err)
+		}
+
+		if strings.ToLower(b.cloudProviderFlag) == kubevirt.ProviderName {
+
+			kubevirtClient, err := kubevirt.GetKubevirtClientFromFlags("", "")
+			if err != nil {
+				glog.Fatalf("Failed to create KubeVirt REST client: %v", err)
+			}
+
+			var kubevirtManager kubevirt.KubeVirtManager
+			if b.cloudConfig != "" {
+				config, fileErr := os.Open(b.cloudConfig)
+				if fileErr != nil {
+					glog.Fatalf("Couldn't open cloud provider configuration %s: %#v", b.cloudConfig, err)
+				}
+				defer config.Close()
+				kubevirtManager, err = kubevirt.CreateManager(config, b.clusterName, kubevirtClient)
+			} else {
+				kubevirtManager, err = kubevirt.CreateManager(nil, b.clusterName, kubevirtClient)
+			}
+			if err != nil {
+				glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
+			}
+
+			cloudProvider, err = kubevirt.BuildKubeVirtProvider(kubevirtManager, discoveryOpts)
+			if err != nil {
+				glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
+			}
 		}
 	}
 

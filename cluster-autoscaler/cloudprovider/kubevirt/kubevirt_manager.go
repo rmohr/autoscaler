@@ -18,6 +18,7 @@ const (
 
 type KubeVirtManager interface {
 	GetClient() *rest.RESTClient
+	GetReplicaSet(namespace string, name string) (*VirtualMachineReplicaSet, error)
 }
 
 type kubeVirtManger struct {
@@ -29,7 +30,13 @@ func CreateManager(configReader io.Reader, clusterName string, rest *rest.RESTCl
 }
 
 func BuildKubeVirtProvider(manager KubeVirtManager, discoveryOpts cloudprovider.NodeGroupDiscoveryOptions) (*KubeVirtCloudProvider, error) {
-	return &KubeVirtCloudProvider{[]string{"testreplicaset"}, manager.GetClient()}, nil
+	rs, err := manager.GetReplicaSet("default", "testreplicaset")
+	if err != nil {
+		return nil, err
+	}
+	ng, err := NodeGroupFromReplicaSet(rs, manager.GetClient())
+
+	return &KubeVirtCloudProvider{[]*ReplicaSetNodeGroup{ng}}, nil
 }
 
 
@@ -49,4 +56,10 @@ func GetKubevirtClientFromFlags(master string, kubeconfig string) (*rest.RESTCli
 
 func (k *kubeVirtManger) GetClient() *rest.RESTClient {
 	return k.Client
+}
+
+func (k *kubeVirtManger) GetReplicaSet(namespace string, name string) (*VirtualMachineReplicaSet, error) {
+	var rs *VirtualMachineReplicaSet
+	err := k.Client.Get().Namespace(namespace).Name(name).Resource(VirtualMachineReplicaSetResource).Do().Into(rs)
+	return rs, err
 }

@@ -6,7 +6,6 @@ import (
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 	"fmt"
 	"k8s.io/apimachinery/pkg/types"
-	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"strings"
@@ -17,7 +16,9 @@ type ReplicaSetNodeGroup struct {
 	namespace string
 	maxSize   int
 	minSize   int
-	client    rest.RESTClient
+	client    *rest.RESTClient
+	selector  labels.Selector
+	template *VMReplicaSetSpec
 }
 
 func (r *ReplicaSetNodeGroup) getReplicaSet() (*VirtualMachineReplicaSet, error) {
@@ -48,18 +49,14 @@ func (r *ReplicaSetNodeGroup) deleteNode(node string) error {
 	return r.client.Delete().Namespace(r.namespace).Namespace(node).Do().Error()
 }
 
-func (r *ReplicaSetNodeGroup) isNodeOwned(rs *VirtualMachineReplicaSet, node *v1.Node) (bool, error) {
+func (r *ReplicaSetNodeGroup) IsNodeOwned(node *v1.Node) (bool, error) {
 	vm := &VirtualMachine{}
 	err := r.client.Get().Resource("virtualmachines").Name(node.ObjectMeta.Name).Namespace(r.namespace).Do().Into(vm)
 	if err != nil {
 		return false, err
 	}
 
-	selector, err := v12.LabelSelectorAsSelector(rs.Spec.Selector)
-	if err != nil {
-		return false, err
-	}
-	return selector.Matches(labels.Set(node.ObjectMeta.Labels)), nil
+	return r.selector.Matches(labels.Set(node.ObjectMeta.Labels)), nil
 }
 
 // MaxSize returns maximum size of the node group.
@@ -106,7 +103,7 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 	}
 	for _, node := range  nodes {
 
-		owned, err := r.isNodeOwned(rs, node)
+		owned, err := r.IsNodeOwned(node)
 
 		if err != nil {
 			return err
@@ -129,7 +126,12 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 		}
 	}
 
-	// TODO what if that fails? We need to always resume
+	err = r.scaleReplicaSet(int(*rs.Spec.Replicas) - len(nodes))
+	if err != nil {
+		return err
+	}
+
+	// TODO what if that fails? We need to always resume. Maybe try a few times and then panic?
 	return r.resumeReplicaSet()
 }
 
@@ -144,6 +146,10 @@ func (r *ReplicaSetNodeGroup) DecreaseTargetSize(delta int) error {
 		return err
 	}
 	replicas := int(rs.Spec.Replicas) + delta
+	// TODO add available nodes to the replicaset, to add an additional sort parameter for removing not-so-long ready nodes
+	if replicas < int(rs.Status.ReadyReplicas) {
+		return fmt.Errorf("Can't decrease the amount of requested virtual machines, since it would remove ready nodes.")
+	}
 	return r.scaleReplicaSet(replicas)
 }
 
@@ -159,12 +165,8 @@ func (r *ReplicaSetNodeGroup) Debug() string {
 
 // Nodes returns a list of all nodes that belong to this node group.
 func (r *ReplicaSetNodeGroup) Nodes() ([]string, error) {
-	rs, err := r.getReplicaSet()
-	if err != nil {
-		return nil, err
-	}
 	l := &VirtualMachineList{}
-	err = r.client.Get().Namespace(r.namespace).Resource("virtualmachines").Param("label-selector", rs.Spec.Selector.String()).Do().Into(l)
+	err := r.client.Get().Namespace(r.namespace).Resource("virtualmachines").Param("label-selector", r.template.Selector.String()).Do().Into(l)
 	if err != nil {
 		return nil, err
 	}
@@ -182,27 +184,19 @@ func (r *ReplicaSetNodeGroup) Nodes() ([]string, error) {
 // capacity and allocatable information as well as all pods that are started on
 // the node by default, using manifest (most likely only kube-proxy). Implementation optional.
 func (r *ReplicaSetNodeGroup) TemplateNodeInfo() (*schedulercache.NodeInfo, error) {
-	rs, err := r.getReplicaSet()
-	if err != nil {
-		return nil, err
-	}
-
-	if err != nil {
-		return nil, err
-	}
 
 	node := &v1.Node{}
 
 	// TODO, don't hardcode the values
 	node.Status.Allocatable[v1.ResourceCPU] = *resource.NewQuantity(800, "m")
-	unit := rs.Spec.Template.Spec.Domain.Memory.Unit
+	unit := r.template.Template.Spec.Domain.Memory.Unit
 	unit = strings.TrimSuffix(unit, "b")
 	unit = strings.TrimSuffix(unit, "bytes")
 	unit = strings.TrimSuffix(unit, "byte")
 	unit = strings.TrimSuffix(unit, "B")
-	value := rs.Spec.Template.Spec.Domain.Memory.Value
+	value := r.template.Template.Spec.Domain.Memory.Value
 	node.Status.Allocatable[v1.ResourceMemory] = resource.MustParse(fmt.Sprint("%v%s", value, unit))
-	node.Status.Allocatable[v1.ResourceStorage] = *resource.NewQuantity(1, "Gi")
+	node.Status.Allocatable[v1.ResourceStorage] = *resource.NewQuantity(10, "Gi")
 
 	nodeInfo := schedulercache.NewNodeInfo()
 	nodeInfo.SetNode(node)

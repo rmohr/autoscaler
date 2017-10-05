@@ -74,8 +74,16 @@ func BuildKubeVirtProvider(manager KubeVirtManager, discoveryOpts cloudprovider.
 			glog.Infof("Detected node group %s/%s", rs.ObjectMeta.Namespace, rs.ObjectMeta.Name)
 			nodeGroup, err := NodeGroupFromReplicaSet(&rs, manager.GetClient())
 			if err != nil {
-				return nil, fmt.Errorf("Creating a NodeGroup out of a Virtual Machine Replca Set failed: %v", err)
+				return nil, fmt.Errorf("Creating a NodeGroup out of a vmrs failed: %v", err)
 			}
+			// Make sure that on a fresh start we unpause the vmrs.
+			if rs.Spec.Paused {
+				err = nodeGroup.ResumeReplicaSet()
+				if err != nil {
+					return nil, fmt.Errorf("Resuming node group %s failed: %v ", nodeGroup.Id(), err)
+				}
+			}
+
 			nodeGroups = append(nodeGroups, nodeGroup)
 		}
 	} else {

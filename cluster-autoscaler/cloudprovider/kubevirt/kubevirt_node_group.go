@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	"fmt"
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
@@ -34,13 +35,13 @@ func (r *ReplicaSetNodeGroup) scaleReplicaSet(replicas int) error {
 	return err
 }
 
-func (r *ReplicaSetNodeGroup) pauseReplicaSet() error {
+func (r *ReplicaSetNodeGroup) PauseReplicaSet() error {
 	requestBody := "[{\"op\":\"replace\",\"path\":\"/spec/pause\",\"value\":\"true\"}]"
 	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body([]byte(requestBody)).Do().Get()
 	return err
 }
 
-func (r *ReplicaSetNodeGroup) resumeReplicaSet() error {
+func (r *ReplicaSetNodeGroup) ResumeReplicaSet() error {
 	requestBody := "[{\"op\":\"replace\",\"path\":\"/spec/pause\",\"value\":\"false\"}]"
 	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body([]byte(requestBody)).Do().Get()
 	return err
@@ -119,10 +120,29 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 		}
 	}
 
-	err = r.pauseReplicaSet()
+	// Pause the vmrs
+	err = r.PauseReplicaSet()
 	if err != nil {
 		return err
 	}
+
+	// Make sure that we resume the nodegroup. If we don't manage to resume it, panic
+	defer func() {
+		var err error
+		for x := 0; x < 3; x++ {
+			err = r.ResumeReplicaSet()
+			if err != nil {
+				glog.Errorf("Failed to resume paused nodegroup: %v", err)
+				continue
+			}
+			break
+		}
+		if err != nil {
+			glog.Fatalf("Failed to  resume paused nodegroup 3 times: %v", err)
+		}
+	}()
+
+	// TODO: Wait for the controller to report that it is paused, to avoid race conditions wit node deletions
 
 	for _, node := range nodes {
 		err := r.deleteNode(node.ObjectMeta.Name)
@@ -136,8 +156,7 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 		return err
 	}
 
-	// TODO what if that fails? We need to always resume. Maybe try a few times and then panic?
-	return r.resumeReplicaSet()
+	return nil
 }
 
 // DecreaseTargetSize decreases the target size of the node group. This function

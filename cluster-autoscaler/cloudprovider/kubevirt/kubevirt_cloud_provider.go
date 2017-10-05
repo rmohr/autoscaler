@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	apiv1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
@@ -33,8 +34,15 @@ func (k *KubeVirtCloudProvider) NodeGroups() []cloudprovider.NodeGroup {
 // occurred. Must be implemented.
 func (k *KubeVirtCloudProvider) NodeGroupForNode(node *apiv1.Node) (cloudprovider.NodeGroup, error) {
 	for _, ng := range k.nodeGroups {
-		if ng.IsNodeOwned(node) {
+		owned, err := ng.IsNodeOwned(node)
+		if owned {
 			return ng, nil
+		}
+		if k8serrors.IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	return nil, nil
@@ -71,6 +79,6 @@ func NodeGroupFromReplicaSet(rs *VirtualMachineReplicaSet, client *rest.RESTClie
 		maxSize:   NodeGroupMaxSize,
 		client:    client,
 		selector:  selector,
-		template: &rs.Spec,
+		template:  &rs.Spec,
 	}, nil
 }

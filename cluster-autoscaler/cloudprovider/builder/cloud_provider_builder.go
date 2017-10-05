@@ -146,35 +146,33 @@ func (b CloudProviderBuilder) Build(discoveryOpts cloudprovider.NodeGroupDiscove
 		if err != nil {
 			glog.Fatalf("Failed to create Kubemark cloud provider: %v", err)
 		}
+	}
+	if strings.ToLower(b.cloudProviderFlag) == kubevirt.ProviderName {
 
-		if strings.ToLower(b.cloudProviderFlag) == kubevirt.ProviderName {
+		kubevirtClient, err := kubevirt.GetKubevirtClientFromFlags("", "/home/rmohr/go/src/kubevirt.io/kubevirt/cluster/vagrant/.kubeconfig")
+		if err != nil {
+			glog.Fatalf("Failed to create KubeVirt REST client: %v", err)
+		}
 
-			kubevirtClient, err := kubevirt.GetKubevirtClientFromFlags("", "")
-			if err != nil {
-				glog.Fatalf("Failed to create KubeVirt REST client: %v", err)
+		var kubevirtManager kubevirt.KubeVirtManager
+		if b.cloudConfig != "" {
+			config, fileErr := os.Open(b.cloudConfig)
+			if fileErr != nil {
+				glog.Fatalf("Couldn't open cloud provider configuration %s: %#v", b.cloudConfig, err)
 			}
+			defer config.Close()
+			kubevirtManager, err = kubevirt.CreateManager(config, b.clusterName, kubevirtClient)
+		} else {
+			kubevirtManager, err = kubevirt.CreateManager(nil, b.clusterName, kubevirtClient)
+		}
+		if err != nil {
+			glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
+		}
 
-			var kubevirtManager kubevirt.KubeVirtManager
-			if b.cloudConfig != "" {
-				config, fileErr := os.Open(b.cloudConfig)
-				if fileErr != nil {
-					glog.Fatalf("Couldn't open cloud provider configuration %s: %#v", b.cloudConfig, err)
-				}
-				defer config.Close()
-				kubevirtManager, err = kubevirt.CreateManager(config, b.clusterName, kubevirtClient)
-			} else {
-				kubevirtManager, err = kubevirt.CreateManager(nil, b.clusterName, kubevirtClient)
-			}
-			if err != nil {
-				glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
-			}
-
-			cloudProvider, err = kubevirt.BuildKubeVirtProvider(kubevirtManager, discoveryOpts)
-			if err != nil {
-				glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
-			}
+		cloudProvider, err = kubevirt.BuildKubeVirtProvider(kubevirtManager, discoveryOpts)
+		if err != nil {
+			glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)
 		}
 	}
-
 	return cloudProvider
 }

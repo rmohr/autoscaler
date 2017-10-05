@@ -1,13 +1,14 @@
 package kubevirt
 
 import (
+	"fmt"
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/client-go/rest"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
-	"fmt"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"strings"
 )
 
@@ -18,35 +19,39 @@ type ReplicaSetNodeGroup struct {
 	minSize   int
 	client    *rest.RESTClient
 	selector  labels.Selector
-	template *VMReplicaSetSpec
+	template  *VMReplicaSetSpec
 }
 
 func (r *ReplicaSetNodeGroup) getReplicaSet() (*VirtualMachineReplicaSet, error) {
-	var rs *VirtualMachineReplicaSet
+	rs := &VirtualMachineReplicaSet{}
 	err := r.client.Get().Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Do().Into(rs)
 	return rs, err
 }
 
 func (r *ReplicaSetNodeGroup) scaleReplicaSet(replicas int) error {
 	requestBody := fmt.Sprintf("[{\"op\":\"replace\",\"path\":\"/spec/replicas\",\"value\":%d}]", replicas)
-	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body(requestBody).Do().Get()
+	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body([]byte(requestBody)).Do().Get()
 	return err
 }
 
 func (r *ReplicaSetNodeGroup) pauseReplicaSet() error {
 	requestBody := "[{\"op\":\"replace\",\"path\":\"/spec/pause\",\"value\":\"true\"}]"
-	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body(requestBody).Do().Get()
+	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body([]byte(requestBody)).Do().Get()
 	return err
 }
 
 func (r *ReplicaSetNodeGroup) resumeReplicaSet() error {
 	requestBody := "[{\"op\":\"replace\",\"path\":\"/spec/pause\",\"value\":\"false\"}]"
-	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body(requestBody).Do().Get()
+	_, err := r.client.Patch(types.JSONPatchType).Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Body([]byte(requestBody)).Do().Get()
 	return err
 }
 
 func (r *ReplicaSetNodeGroup) deleteNode(node string) error {
 	return r.client.Delete().Namespace(r.namespace).Namespace(node).Do().Error()
+}
+
+func (r *ReplicaSetNodeGroup) IsVirtualMachineOwned(vm *VirtualMachine) bool {
+	return r.selector.Matches(labels.Set(vm.ObjectMeta.Labels))
 }
 
 func (r *ReplicaSetNodeGroup) IsNodeOwned(node *v1.Node) (bool, error) {
@@ -56,7 +61,7 @@ func (r *ReplicaSetNodeGroup) IsNodeOwned(node *v1.Node) (bool, error) {
 		return false, err
 	}
 
-	return r.selector.Matches(labels.Set(node.ObjectMeta.Labels)), nil
+	return r.IsVirtualMachineOwned(vm), nil
 }
 
 // MaxSize returns maximum size of the node group.
@@ -78,7 +83,7 @@ func (r *ReplicaSetNodeGroup) TargetSize() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return int(rs.Spec.Replicas), nil
+	return int(*rs.Spec.Replicas), nil
 }
 
 // IncreaseSize increases the size of the node group. To delete a node you need
@@ -89,7 +94,7 @@ func (r *ReplicaSetNodeGroup) IncreaseSize(delta int) error {
 	if err != nil {
 		return err
 	}
-	replicas := int(rs.Spec.Replicas) + delta
+	replicas := int(*rs.Spec.Replicas) + delta
 	return r.scaleReplicaSet(replicas)
 }
 
@@ -101,7 +106,7 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 	if err != nil {
 		return err
 	}
-	for _, node := range  nodes {
+	for _, node := range nodes {
 
 		owned, err := r.IsNodeOwned(node)
 
@@ -119,7 +124,7 @@ func (r *ReplicaSetNodeGroup) DeleteNodes(nodes []*v1.Node) error {
 		return err
 	}
 
-	for _, node := range  nodes {
+	for _, node := range nodes {
 		err := r.deleteNode(node.ObjectMeta.Name)
 		if err != nil {
 			return err
@@ -145,7 +150,7 @@ func (r *ReplicaSetNodeGroup) DecreaseTargetSize(delta int) error {
 	if err != nil {
 		return err
 	}
-	replicas := int(rs.Spec.Replicas) + delta
+	replicas := int(*rs.Spec.Replicas) + delta
 	// TODO add available nodes to the replicaset, to add an additional sort parameter for removing not-so-long ready nodes
 	if replicas < int(rs.Status.ReadyReplicas) {
 		return fmt.Errorf("Can't decrease the amount of requested virtual machines, since it would remove ready nodes.")
@@ -185,18 +190,24 @@ func (r *ReplicaSetNodeGroup) Nodes() ([]string, error) {
 // the node by default, using manifest (most likely only kube-proxy). Implementation optional.
 func (r *ReplicaSetNodeGroup) TemplateNodeInfo() (*schedulercache.NodeInfo, error) {
 
-	node := &v1.Node{}
+	node := &v1.Node{Status: v1.NodeStatus{Allocatable: v1.ResourceList{}}}
 
 	// TODO, don't hardcode the values
-	node.Status.Allocatable[v1.ResourceCPU] = *resource.NewQuantity(800, "m")
+	node.Status.Allocatable[v1.ResourceCPU] = *resource.NewQuantity(16000, "m")
 	unit := r.template.Template.Spec.Domain.Memory.Unit
 	unit = strings.TrimSuffix(unit, "b")
 	unit = strings.TrimSuffix(unit, "bytes")
 	unit = strings.TrimSuffix(unit, "byte")
 	unit = strings.TrimSuffix(unit, "B")
 	value := r.template.Template.Spec.Domain.Memory.Value
-	node.Status.Allocatable[v1.ResourceMemory] = resource.MustParse(fmt.Sprint("%v%s", value, unit))
-	node.Status.Allocatable[v1.ResourceStorage] = *resource.NewQuantity(10, "Gi")
+	node.Status.Allocatable[v1.ResourceMemory] = resource.MustParse(fmt.Sprintf("%v%s", value, unit))
+	node.Status.Allocatable[v1.ResourceStorage] = *resource.NewQuantity(10000, "Gi")
+	node.Status.Allocatable[v1.ResourcePods] = resource.MustParse("110")
+	node.Status.Conditions = cloudprovider.BuildReadyConditions()
+
+	// Make capacity and allocatable the same, obviosly just for testing
+
+	node.Status.Capacity = node.Status.Allocatable
 
 	nodeInfo := schedulercache.NewNodeInfo()
 	nodeInfo.SetNode(node)

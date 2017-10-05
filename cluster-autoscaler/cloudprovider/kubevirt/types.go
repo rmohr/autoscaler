@@ -494,7 +494,7 @@ func (in *VirtualMachineReplicaSetList) DeepCopyObject() runtime.Object {
 }
 
 type DomainSpec struct {
-	Memory  Memory   `json:"memory"`
+	Memory Memory `json:"memory"`
 }
 
 type Memory struct {

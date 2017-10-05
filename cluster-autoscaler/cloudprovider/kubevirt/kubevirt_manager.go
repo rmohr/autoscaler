@@ -1,17 +1,17 @@
 package kubevirt
 
 import (
-	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"io"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
-	ProviderName = "kubevirt"
+	ProviderName     = "kubevirt"
 	NodeGroupMaxSize = 1000
 	NodeGroupMinSize = 0
 )
@@ -39,7 +39,6 @@ func BuildKubeVirtProvider(manager KubeVirtManager, discoveryOpts cloudprovider.
 	return &KubeVirtCloudProvider{[]*ReplicaSetNodeGroup{ng}}, nil
 }
 
-
 func GetKubevirtClientFromFlags(master string, kubeconfig string) (*rest.RESTClient, error) {
 	config, err := clientcmd.BuildConfigFromFlags(master, kubeconfig)
 	if err != nil {
@@ -59,7 +58,7 @@ func (k *kubeVirtManger) GetClient() *rest.RESTClient {
 }
 
 func (k *kubeVirtManger) GetReplicaSet(namespace string, name string) (*VirtualMachineReplicaSet, error) {
-	var rs *VirtualMachineReplicaSet
+	rs := &VirtualMachineReplicaSet{}
 	err := k.Client.Get().Namespace(namespace).Name(name).Resource(VirtualMachineReplicaSetResource).Do().Into(rs)
 	return rs, err
 }

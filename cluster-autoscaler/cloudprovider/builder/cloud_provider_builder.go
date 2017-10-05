@@ -149,11 +149,6 @@ func (b CloudProviderBuilder) Build(discoveryOpts cloudprovider.NodeGroupDiscove
 	}
 	if strings.ToLower(b.cloudProviderFlag) == kubevirt.ProviderName {
 
-		kubevirtClient, err := kubevirt.GetKubevirtClientFromFlags("", "/home/rmohr/go/src/kubevirt.io/kubevirt/cluster/vagrant/.kubeconfig")
-		if err != nil {
-			glog.Fatalf("Failed to create KubeVirt REST client: %v", err)
-		}
-
 		var kubevirtManager kubevirt.KubeVirtManager
 		if b.cloudConfig != "" {
 			config, fileErr := os.Open(b.cloudConfig)
@@ -161,9 +156,9 @@ func (b CloudProviderBuilder) Build(discoveryOpts cloudprovider.NodeGroupDiscove
 				glog.Fatalf("Couldn't open cloud provider configuration %s: %#v", b.cloudConfig, err)
 			}
 			defer config.Close()
-			kubevirtManager, err = kubevirt.CreateManager(config, b.clusterName, kubevirtClient)
+			kubevirtManager, err = kubevirt.CreateManager(config, b.clusterName)
 		} else {
-			kubevirtManager, err = kubevirt.CreateManager(nil, b.clusterName, kubevirtClient)
+			kubevirtManager, err = kubevirt.CreateManager(nil, b.clusterName)
 		}
 		if err != nil {
 			glog.Fatalf("Failed to create KubeVirt cloud provider: %v", err)

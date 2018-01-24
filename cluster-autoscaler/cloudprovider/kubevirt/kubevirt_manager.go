@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"strings"
+	virtv1 "kubevirt.io/kubevirt/pkg/api/v1"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 
 type KubeVirtManager interface {
 	GetClient() *rest.RESTClient
-	GetAllReplicaSets(labels *v1.LabelSelector) ([]VirtualMachineReplicaSet, error)
+	GetAllReplicaSets(labels *v1.LabelSelector) ([]virtv1.VirtualMachineReplicaSet, error)
 }
 
 type kubeVirtManger struct {
@@ -99,7 +100,7 @@ func GetKubevirtClientFromFlags(master string, kubeconfig string) (*rest.RESTCli
 		return nil, err
 	}
 
-	config.GroupVersion = &GroupVersion
+	config.GroupVersion = &virtv1.GroupVersion
 	config.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: scheme.Codecs}
 	config.APIPath = "/apis"
 	config.ContentType = runtime.ContentTypeJSON
@@ -111,8 +112,8 @@ func (k *kubeVirtManger) GetClient() *rest.RESTClient {
 	return k.Client
 }
 
-func (k *kubeVirtManger) GetAllReplicaSets(labels *v1.LabelSelector) ([]VirtualMachineReplicaSet, error) {
-	list := &VirtualMachineReplicaSetList{}
+func (k *kubeVirtManger) GetAllReplicaSets(labels *v1.LabelSelector) ([]virtv1.VirtualMachineReplicaSet, error) {
+	list := &virtv1.VirtualMachineReplicaSetList{}
 	err := k.Client.Get().Resource(VirtualMachineReplicaSetResource).Param("label-selector", labels.String()).Do().Into(list)
 	if err != nil {
 		return nil, err

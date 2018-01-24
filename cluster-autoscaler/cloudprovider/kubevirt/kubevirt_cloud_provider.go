@@ -8,6 +8,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	"k8s.io/client-go/rest"
+	virtv1 "kubevirt.io/kubevirt/pkg/api/v1"
 )
 
 type KubeVirtCloudProvider struct {
@@ -67,7 +68,7 @@ func (*KubeVirtCloudProvider) NewNodeGroup(machineType string, labels map[string
 	return nil, cloudprovider.ErrNotImplemented
 }
 
-func NodeGroupFromReplicaSet(rs *VirtualMachineReplicaSet, client *rest.RESTClient) (*ReplicaSetNodeGroup, error) {
+func NodeGroupFromReplicaSet(rs *virtv1.VirtualMachineReplicaSet, client *rest.RESTClient) (*ReplicaSetNodeGroup, error) {
 	selector, err := v1.LabelSelectorAsSelector(rs.Spec.Selector)
 	if err != nil {
 		return nil, err
@@ -79,6 +80,6 @@ func NodeGroupFromReplicaSet(rs *VirtualMachineReplicaSet, client *rest.RESTClie
 		maxSize:   NodeGroupMaxSize,
 		client:    client,
 		selector:  selector,
-		template:  &rs.Spec,
+		template:  rs,
 	}, nil
 }

@@ -18,7 +18,7 @@ Not implemented.
 
 ```ini
 [cluster]
-kubeconfig=/config/to/undercloud.cfg
+kubeconfig=/config/to/kubevirt-k8s.cfg
 server=https://apiserver.override:8664
 ```
 
@@ -27,11 +27,15 @@ the in-cluster config lookup.
 
 ## Example
 
-To scale nodes of a nested Kubernetes cluster (overcloud), from a KubeVirt
-enabled Kubernetes (undercloud), take the config from above and save it in
+To scale nodes of a nested Kubernetes cluster (can be called `overcloud`) from a KubeVirt
+enabled Kubernetes (can be called `undercloud`, or `basecloud`), take the config from above and save it in
 `undercloud.ini`. Create a `VirtualMachineReplicaSet` with a cloud-init secret
 and the `kubevirt.io/autoscaler` label. Then run
 
 ```bash
 ./autoscaler --kubeconfig /config/to/overcloud.cfg  --cloud-provider --cloud-config undercloud.ini --node-group-auto-discovery "kubevirt:labels=kubevirt.io/autoscaler"
 ```
+
+## KubeVirt Dependencies
+
+TODO: Properly vendor the kubevirt API.

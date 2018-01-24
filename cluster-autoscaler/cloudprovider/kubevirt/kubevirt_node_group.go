@@ -10,8 +10,10 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/client-go/rest"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
-	"strings"
+	virtv1 "kubevirt.io/kubevirt/pkg/api/v1"
 )
+
+var VirtualMachineReplicaSetResource = "virtualmachinereplicasets"
 
 type ReplicaSetNodeGroup struct {
 	name      string
@@ -20,11 +22,11 @@ type ReplicaSetNodeGroup struct {
 	minSize   int
 	client    *rest.RESTClient
 	selector  labels.Selector
-	template  *VMReplicaSetSpec
+	template  *virtv1.VirtualMachineReplicaSet
 }
 
-func (r *ReplicaSetNodeGroup) getReplicaSet() (*VirtualMachineReplicaSet, error) {
-	rs := &VirtualMachineReplicaSet{}
+func (r *ReplicaSetNodeGroup) getReplicaSet() (*virtv1.VirtualMachineReplicaSet, error) {
+	rs := &virtv1.VirtualMachineReplicaSet{}
 	err := r.client.Get().Namespace(r.namespace).Name(r.name).Resource(VirtualMachineReplicaSetResource).Do().Into(rs)
 	return rs, err
 }
@@ -51,12 +53,12 @@ func (r *ReplicaSetNodeGroup) deleteNode(node string) error {
 	return r.client.Delete().Namespace(r.namespace).Namespace(node).Do().Error()
 }
 
-func (r *ReplicaSetNodeGroup) IsVirtualMachineOwned(vm *VirtualMachine) bool {
+func (r *ReplicaSetNodeGroup) IsVirtualMachineOwned(vm *virtv1.VirtualMachine) bool {
 	return r.selector.Matches(labels.Set(vm.ObjectMeta.Labels))
 }
 
 func (r *ReplicaSetNodeGroup) IsNodeOwned(node *v1.Node) (bool, error) {
-	vm := &VirtualMachine{}
+	vm := &virtv1.VirtualMachine{}
 	err := r.client.Get().Resource("virtualmachines").Name(node.ObjectMeta.Name).Namespace(r.namespace).Do().Into(vm)
 	if err != nil {
 		return false, err
@@ -189,8 +191,8 @@ func (r *ReplicaSetNodeGroup) Debug() string {
 
 // Nodes returns a list of all nodes that belong to this node group.
 func (r *ReplicaSetNodeGroup) Nodes() ([]string, error) {
-	l := &VirtualMachineList{}
-	err := r.client.Get().Namespace(r.namespace).Resource("virtualmachines").Param("label-selector", r.template.Selector.String()).Do().Into(l)
+	l := &virtv1.VirtualMachineList{}
+	err := r.client.Get().Namespace(r.namespace).Resource("virtualmachines").Param("label-selector", r.template.Spec.Selector.String()).Do().Into(l)
 	if err != nil {
 		return nil, err
 	}
@@ -209,24 +211,39 @@ func (r *ReplicaSetNodeGroup) Nodes() ([]string, error) {
 // the node by default, using manifest (most likely only kube-proxy). Implementation optional.
 func (r *ReplicaSetNodeGroup) TemplateNodeInfo() (*schedulercache.NodeInfo, error) {
 
-	node := &v1.Node{Status: v1.NodeStatus{Allocatable: v1.ResourceList{}}}
+	node := &v1.Node{Status: v1.NodeStatus{Capacity: v1.ResourceList{}}}
 
-	// TODO, don't hardcode the values
-	node.Status.Allocatable[v1.ResourceCPU] = *resource.NewQuantity(16000, "m")
-	unit := r.template.Template.Spec.Domain.Memory.Unit
-	unit = strings.TrimSuffix(unit, "b")
-	unit = strings.TrimSuffix(unit, "bytes")
-	unit = strings.TrimSuffix(unit, "byte")
-	unit = strings.TrimSuffix(unit, "B")
-	value := r.template.Template.Spec.Domain.Memory.Value
-	node.Status.Allocatable[v1.ResourceMemory] = resource.MustParse(fmt.Sprintf("%v%s", value, unit))
-	node.Status.Allocatable[v1.ResourceStorage] = *resource.NewQuantity(10000, "Gi")
-	node.Status.Allocatable[v1.ResourcePods] = resource.MustParse("110")
+	var cpuCores uint32 = 1
+	if r.template.Spec.Template.Spec.Domain.CPU != nil {
+		cpuCores = r.template.Spec.Template.Spec.Domain.CPU.Cores
+	}
+
+	node.Status.Capacity[v1.ResourceCPU] = *resource.NewQuantity(int64(cpuCores), "m")
+	node.Status.Capacity[v1.ResourceMemory] = r.template.Spec.Template.Spec.Domain.Resources.Requests[v1.ResourceMemory]
+
+	var err error
+	if val, ok := r.template.Annotations["kubevirt.io/resourceStorage"]; ok {
+		node.Status.Capacity[v1.ResourceStorage], err = resource.ParseQuantity(val)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("No 'kubevirt.io/resourceStorage' annotation found.")
+	}
+
+	if val, ok := r.template.Annotations["kubevirt.io/resourcePods"]; ok {
+		node.Status.Capacity[v1.ResourcePods], err = resource.ParseQuantity(val)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		node.Status.Capacity[v1.ResourcePods] = resource.MustParse("110")
+	}
+
 	node.Status.Conditions = cloudprovider.BuildReadyConditions()
 
-	// Make capacity and allocatable the same, obviosly just for testing
-
-	node.Status.Capacity = node.Status.Allocatable
+	// TODO Make capacity and allocatable configurable
+	node.Status.Allocatable = node.Status.Capacity
 
 	nodeInfo := schedulercache.NewNodeInfo()
 	nodeInfo.SetNode(node)
